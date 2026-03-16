@@ -1,33 +1,21 @@
-// Used to try and fix screen tearing
-// https://carmencincotti.com/2022-12-19/how-to-render-a-webgpu-triangle-series-part-three-video/
-
-//async function initialize () {
-//    const gpu = navigator.gpu
-//    if (!navigator.gpu) {
-//        throw Error("WebGPU not supported.");
-//    }
-//
-//    const adapter = await gpu.requestAdapter()
-//    if (!adapter) {
-//        throw Error("Couldn't request WebGPU adapter.");
-//    }
-//
-//    const presentationFormat = navigator.gpu.getPreferredCanvasFormat()
-//
-//    const device = await adapter.requestDevice()
-//    context.configure({
-//        device,
-//        format: presentationFormat,
-//    })
-//    return device
-//}
-
-//const init = initialize() 
+// Game configuration constants
+const CONFIG = {
+    CANVAS_WIDTH: 1024,
+    CANVAS_HEIGHT: 576,
+    MOVE_SPEED: 3,
+    MAP_OFFSET: { x: -730, y: -620 },
+    TILES_PER_ROW: 70,
+    COLLISION_TILE_ID: 1025,
+    ENCOUNTER_RATE: 0.01,
+    PLAYER_FRAMES: 4,
+    PLAYER_SPRITE_WIDTH: 192,
+    PLAYER_SPRITE_HEIGHT: 68,
+}
 
 const canvas = document.querySelector("canvas")
 const context = canvas.getContext("2d")
-canvas.width = 1024
-canvas.height = 576
+canvas.width = CONFIG.CANVAS_WIDTH
+canvas.height = CONFIG.CANVAS_HEIGHT
 
 context.fillStyle = "white"
 context.fillRect(0, 0, canvas.width, canvas.height)
@@ -38,27 +26,27 @@ let collisionsMap = []
 const battleZoneData = data.layers[9].data
 let battleZoneMap= []
 
-for(let i = 0; i < collisions.length; i += 70) {
-    collisionsMap.push(collisions.slice(i, 70 + i))
+for(let i = 0; i < collisions.length; i += CONFIG.TILES_PER_ROW) {
+    collisionsMap.push(collisions.slice(i, CONFIG.TILES_PER_ROW + i))
 }
 
-for(let i = 0; i < battleZoneData.length; i += 70) {
-    battleZoneMap.push(battleZoneData.slice(i, 70 + i))
+for(let i = 0; i < battleZoneData.length; i += CONFIG.TILES_PER_ROW) {
+    battleZoneMap.push(battleZoneData.slice(i, CONFIG.TILES_PER_ROW + i))
 }
 
 
 const boundaries = []
 const offset = {
-    x: -730,
-    y: -620,
+    x: CONFIG.MAP_OFFSET.x,
+    y: CONFIG.MAP_OFFSET.y,
 }
 
 collisionsMap.forEach((row, i)=> {
     row.forEach((symbol, j) => {
-        if(symbol === 1025) {
+        if(symbol === CONFIG.COLLISION_TILE_ID) {
             boundaries.push(new Boundary({
                 position: {
-                    x: j * Boundary.width + offset.x, 
+                    x: j * Boundary.width + offset.x,
                     y: i * Boundary.height + offset.y,
                 }
             }))
@@ -70,10 +58,10 @@ const battleZones = []
 
 battleZoneMap.forEach((row, i)=> {
     row.forEach((symbol, j) => {
-        if(symbol === 1025) {
+        if(symbol === CONFIG.COLLISION_TILE_ID) {
             battleZones.push(new Boundary({
                 position: {
-                    x: j * Boundary.width + offset.x, 
+                    x: j * Boundary.width + offset.x,
                     y: i * Boundary.height + offset.y,
                 }
             }))
@@ -81,39 +69,25 @@ battleZoneMap.forEach((row, i)=> {
     })
 })
 
-console.log(battleZones)
+function loadImage(src) {
+    const img = new Image()
+    img.src = src
+    img.onerror = () => console.error(`Failed to load image: ${src}`)
+    return img
+}
 
-const image = new Image()
-image.src = "./img/pelletTown.png"
-
-const playerDownImage = new Image()
-playerDownImage.src = "./img/playerDown.png"
-
-const playerLeftImage = new Image()
-playerLeftImage.src = "./img/playerLeft.png"
-
-const playerUpImage = new Image()
-playerUpImage.src = "./img/playerUp.png"
-
-const playerRightImage = new Image()
-playerRightImage.src = "./img/playerRight.png"
-
-const foregroundImage = new Image()
-foregroundImage.src = "./img/foregroundObject.png"
+const image = loadImage("./img/pelletTown.png")
+const playerDownImage = loadImage("./img/playerDown.png")
+const playerLeftImage = loadImage("./img/playerLeft.png")
+const playerUpImage = loadImage("./img/playerUp.png")
+const playerRightImage = loadImage("./img/playerRight.png")
+const foregroundImage = loadImage("./img/foregroundObject.png")
 
 const keys = {
-    w: {
-        pressed: false
-    },
-    a: {
-        pressed: false
-    },
-    s: {
-        pressed: false
-    },
-    d: {
-        pressed: false
-    },
+    w: { pressed: false },
+    a: { pressed: false },
+    s: { pressed: false },
+    d: { pressed: false },
 }
 
 const background = new Sprite({
@@ -135,12 +109,12 @@ const foreground = new Sprite({
 
 const player = new Sprite({
     position: {
-        x: canvas.width / 2 - (192 / 4) / 2,
-        y: canvas.height / 2 - 68 / 2,
+        x: canvas.width / 2 - (CONFIG.PLAYER_SPRITE_WIDTH / CONFIG.PLAYER_FRAMES) / 2,
+        y: canvas.height / 2 - CONFIG.PLAYER_SPRITE_HEIGHT / 2,
     },
     image: playerDownImage,
     frames: {
-        max: 4
+        max: CONFIG.PLAYER_FRAMES
     },
     sprites: {
         up: playerUpImage,
@@ -149,25 +123,14 @@ const player = new Sprite({
         right: playerRightImage,
     }
 })
-console.log(player)
-const testBoundary = new Boundary({
-    position: {
-        x: 400,
-        y: 400,
-    }
-})
 
 function rectangularCollision({rectangle1, rectangle2}){
-    if (
-        rectangle1.position.x + rectangle1.width >= rectangle2.position.x && 
+    return (
+        rectangle1.position.x + rectangle1.width >= rectangle2.position.x &&
         rectangle1.position.x <= rectangle2.position.x + rectangle2.width &&
         rectangle1.position.y <= rectangle2.position.y + rectangle2.height &&
         rectangle1.position.y  + rectangle1.height >= rectangle2.position.y
-    ) {
-        return true
-    } else {
-        return false
-    }
+    )
 }
 
 const movables = [background, foreground, ...boundaries, ...battleZones]
@@ -176,17 +139,23 @@ const battle = {
     initiated: false
 }
 
-function animate() {
+let lastTimestamp = 0
+
+function animate(timestamp = 0) {
     window.requestAnimationFrame(animate)
-    background.draw()
+
+    const deltaTime = timestamp - lastTimestamp
+    lastTimestamp = timestamp
+
+    background.draw(deltaTime)
     boundaries.forEach(boundary => {
         boundary.draw()
     })
     battleZones.forEach(battleZone => {
         battleZone.draw()
     })
-    player.draw()
-    foreground.draw()
+    player.draw(deltaTime)
+    foreground.draw(deltaTime)
 
     let moving = true
     player.moving = false
@@ -198,17 +167,16 @@ function animate() {
             let battleZone = battleZones[i]
             const overlapping = (Math.min(player.position.x + player.width, battleZone.position.x + battleZone.width) -
                 Math.max(player.position.x, battleZone.position.x)) *
-                (Math.min(player.position.y + player.height, battleZone.position.y + battleZone.height) - 
+                (Math.min(player.position.y + player.height, battleZone.position.y + battleZone.height) -
                 Math.max(player.position.y, battleZone.position.y))
             if(rectangularCollision({
-                rectangle1: player, 
-                rectangle2: battleZone, 
-            }) && 
-                overlapping > (player.height * player.width) / 2 && 
-                Math.random() < 0.01
+                rectangle1: player,
+                rectangle2: battleZone,
+            }) &&
+                overlapping >= (player.height * player.width) / 2 &&
+                Math.random() < CONFIG.ENCOUNTER_RATE
             ) {
-                console.log("battle initiated")
-                battle.initiated =  true
+                battle.initiated = true
                 break
             }
         }
@@ -219,21 +187,20 @@ function animate() {
         for (let i = 0; i < boundaries.length; i++) {
             let boundary = boundaries[i]
             if(rectangularCollision({
-                rectangle1: player, 
+                rectangle1: player,
                 rectangle2: {...boundary, position: {
                     x: boundary.position.x,
-                    y: boundary.position.y + 3,
-                }}, 
+                    y: boundary.position.y + CONFIG.MOVE_SPEED,
+                }},
             })) {
                 moving = false
                 break;
-
             }
         }
 
         if (moving) {
             movables.forEach(movable => {
-                movable.position.y += 3
+                movable.position.y += CONFIG.MOVE_SPEED
             })
         }
     }
@@ -243,23 +210,21 @@ function animate() {
         for (let i = 0; i < boundaries.length; i++) {
             let boundary = boundaries[i]
             if(rectangularCollision({
-                rectangle1: player, 
+                rectangle1: player,
                 rectangle2: {...boundary, position: {
-                    x: boundary.position.x,
+                    x: boundary.position.x + CONFIG.MOVE_SPEED,
                     y: boundary.position.y,
-                }}, 
+                }},
             })) {
-                console.log("boundary")
                 moving = false
                 break;
-
             }
         }
 
         if (moving) {
-        movables.forEach(movable => {
-            movable.position.x += 3
-        })
+            movables.forEach(movable => {
+                movable.position.x += CONFIG.MOVE_SPEED
+            })
         }
     }
     else if (keys.s.pressed && lastKey === "s") {
@@ -268,22 +233,20 @@ function animate() {
         for (let i = 0; i < boundaries.length; i++) {
             let boundary = boundaries[i]
             if(rectangularCollision({
-                rectangle1: player, 
+                rectangle1: player,
                 rectangle2: {...boundary, position: {
                     x: boundary.position.x,
-                    y: boundary.position.y - 3,
-                }}, 
+                    y: boundary.position.y - CONFIG.MOVE_SPEED,
+                }},
             })) {
-                console.log("boundary")
                 moving = false
                 break;
-
             }
         }
         if (moving) {
-        movables.forEach(movable => {
-            movable.position.y -= 3
-        })
+            movables.forEach(movable => {
+                movable.position.y -= CONFIG.MOVE_SPEED
+            })
         }
     }
     else if (keys.d.pressed && lastKey === "d") {
@@ -292,22 +255,20 @@ function animate() {
         for (let i = 0; i < boundaries.length; i++) {
             let boundary = boundaries[i]
             if(rectangularCollision({
-                rectangle1: player, 
+                rectangle1: player,
                 rectangle2: {...boundary, position: {
-                    x: boundary.position.x - 3,
+                    x: boundary.position.x - CONFIG.MOVE_SPEED,
                     y: boundary.position.y,
-                }}, 
+                }},
             })) {
-                console.log("boundary")
                 moving = false
                 break;
-
             }
         }
         if (moving) {
-        movables.forEach(movable => {
-            movable.position.x -= 3
-        })
+            movables.forEach(movable => {
+                movable.position.x -= CONFIG.MOVE_SPEED
+            })
         }
     }
 }
@@ -334,7 +295,6 @@ window.addEventListener("keydown", (e) => {
             lastKey = "d"
             break;
     }
-
 })
 
 
@@ -353,5 +313,4 @@ window.addEventListener("keyup", (e) => {
             keys.d.pressed = false
             break;
     }
-
 })

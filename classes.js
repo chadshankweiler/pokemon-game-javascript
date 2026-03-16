@@ -1,3 +1,5 @@
+const DEBUG = false
+
 class Sprite {
     constructor({
         position,
@@ -11,16 +13,17 @@ class Sprite {
         this.image = image
         this.frames = {...frames, val: 0, elapse: 0}
         this.image.onload = () => {
-            this.width = this.image.width / this.frames.max 
-            this.height = this.image.height 
-            console.log("width",this.width)
-            console.log("height",this.height)
+            this.width = this.image.width / this.frames.max
+            this.height = this.image.height
+        }
+        this.image.onerror = () => {
+            console.error(`Failed to load image: ${this.image.src}`)
         }
         this.moving = false
         this.sprites = sprites
     }
 
-    draw() {
+    draw(deltaTime = 16.67) {
         context.drawImage(this.image,
 
         // Cropping Player Image -> start x, start y, end x, end y
@@ -38,10 +41,11 @@ class Sprite {
         )
         if (!this.moving) return
             if (this.frames.max > 1) {
-                this.frames.elapse++
+                this.frames.elapse += deltaTime
             }
 
-            if(this.frames.elapse % 30 === 0) {
+            if(this.frames.elapse >= 500) {
+                this.frames.elapse = 0
                 if (this.frames.val < this.frames.max - 1) this.frames.val++
                 else this.frames.val = 0
             }
@@ -58,6 +62,7 @@ class Boundary {
     }
 
     draw() {
+        if (!DEBUG) return
         context.fillStyle = "rgba(255, 0, 0, 0.2)"
         context.fillRect(this.position.x, this.position.y, this.width, this.height)
     }
