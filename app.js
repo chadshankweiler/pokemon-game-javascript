@@ -10,6 +10,7 @@ const CONFIG = {
     PLAYER_FRAMES: 4,
     PLAYER_SPRITE_WIDTH: 192,
     PLAYER_SPRITE_HEIGHT: 68,
+    ZOOM: 0.75,
 }
 
 const canvas = document.querySelector("canvas")
@@ -133,11 +134,61 @@ function rectangularCollision({rectangle1, rectangle2}){
     )
 }
 
-const movables = [background, foreground, ...boundaries, ...battleZones]
+// Create NPCs from data
+const npcs = NPC_DATA.map(npcData => new NPC({
+    position: {
+        x: npcData.tileX * Boundary.width + offset.x,
+        y: npcData.tileY * Boundary.height + offset.y,
+    },
+    name: npcData.name,
+    color: npcData.color,
+    id: npcData.id,
+    systemPrompt: npcData.systemPrompt,
+}))
+
+// Add NPC collision boundaries
+const npcBoundaries = npcs.map(npc => new Boundary({
+    position: { x: npc.position.x, y: npc.position.y }
+}))
+boundaries.push(...npcBoundaries)
+
+const movables = [background, foreground, ...boundaries, ...battleZones, ...npcs]
 
 const battle = {
     initiated: false
 }
+
+const dialogueBox = new DialogueBox()
+const interactionManager = new InteractionManager(dialogueBox)
+
+// Alert polling system
+const ALERT_POLL_INTERVAL = 60000 // 60 seconds
+let alertPollingTimer = null
+
+async function checkAlerts() {
+    try {
+        const response = await fetch("/api/alerts")
+        if (!response.ok) return
+
+        const data = await response.json()
+        const alerts = data.alerts || []
+
+        for (const alert of alerts) {
+            const npc = npcs.find(n => n.id === alert.npcId)
+            if (npc && !npc.isApproaching && !npc.isReturning && !dialogueBox.active) {
+                npc.startApproach(alert.message, alert.priority)
+            }
+        }
+    } catch (err) {
+        console.error("Alert polling failed:", err)
+    }
+}
+
+// Start polling after a short delay
+setTimeout(() => {
+    checkAlerts()
+    alertPollingTimer = setInterval(checkAlerts, ALERT_POLL_INTERVAL)
+}, 3000)
 
 let lastTimestamp = 0
 
@@ -147,6 +198,11 @@ function animate(timestamp = 0) {
     const deltaTime = timestamp - lastTimestamp
     lastTimestamp = timestamp
 
+    context.save()
+    context.translate(canvas.width / 2, canvas.height / 2)
+    context.scale(CONFIG.ZOOM, CONFIG.ZOOM)
+    context.translate(-canvas.width / 2, -canvas.height / 2)
+
     background.draw(deltaTime)
     boundaries.forEach(boundary => {
         boundary.draw()
@@ -154,13 +210,34 @@ function animate(timestamp = 0) {
     battleZones.forEach(battleZone => {
         battleZone.draw()
     })
+    npcs.forEach(npc => {
+        // Update NPC movement (approaching player or returning home)
+        const moveResult = npc.updateMovement(player.position)
+        if (moveResult === "arrived" && npc.alertMessage && !dialogueBox.active) {
+            dialogueBox.open(npc.name, npc.alertMessage)
+            npc.alertMessage = null
+            npc.alertPriority = null
+            // NPC will return home when dialogue closes
+            npc._pendingReturn = true
+        }
+
+        npc.showIndicator = npc.isPlayerInRange(player.position)
+        npc.draw(deltaTime)
+    })
     player.draw(deltaTime)
     foreground.draw(deltaTime)
+
+    context.restore()
+
+    // Draw dialogue in screen-space (after restore, unaffected by zoom)
+    dialogueBox.update(deltaTime)
+    dialogueBox.draw(context, canvas.width, canvas.height)
 
     let moving = true
     player.moving = false
 
     if(battle.initiated) return
+    if(dialogueBox.active) return
 
     if(keys.w.pressed || keys.a.pressed || keys.d.pressed || keys.s.pressed) {
         for (let i = 0; i < battleZones.length; i++) {
@@ -181,94 +258,81 @@ function animate(timestamp = 0) {
             }
         }
     }
-    if (keys.w.pressed && lastKey === "w") {
-        player.image = player.sprites.up
+    // Build movement direction vector
+    let dx = 0
+    let dy = 0
+    if (keys.w.pressed) dy -= 1
+    if (keys.s.pressed) dy += 1
+    if (keys.a.pressed) dx -= 1
+    if (keys.d.pressed) dx += 1
+
+    // Normalize diagonal speed so it doesn't feel faster
+    if (dx !== 0 && dy !== 0) {
+        const diag = Math.SQRT1_2
+        dx *= diag
+        dy *= diag
+    }
+
+    const moveX = dx * CONFIG.MOVE_SPEED
+    const moveY = dy * CONFIG.MOVE_SPEED
+
+    if (dx !== 0 || dy !== 0) {
         player.moving = true
+
+        // Set sprite facing based on last pressed key
+        if (lastKey === "w" || (dy < 0 && lastKey !== "a" && lastKey !== "d")) player.image = player.sprites.up
+        else if (lastKey === "s" || (dy > 0 && lastKey !== "a" && lastKey !== "d")) player.image = player.sprites.down
+        else if (lastKey === "a" || dx < 0) player.image = player.sprites.left
+        else if (lastKey === "d" || dx > 0) player.image = player.sprites.right
+    }
+
+    // Check and apply horizontal movement
+    if (moveX !== 0) {
+        let canMoveX = true
+        for (let i = 0; i < boundaries.length; i++) {
+            let boundary = boundaries[i]
+            if(rectangularCollision({
+                rectangle1: player,
+                rectangle2: {...boundary, position: {
+                    x: boundary.position.x - moveX,
+                    y: boundary.position.y,
+                }},
+            })) {
+                canMoveX = false
+                break;
+            }
+        }
+        if (canMoveX) {
+            movables.forEach(movable => {
+                movable.position.x -= moveX
+            })
+            // Keep NPC home positions in sync with world scroll
+            npcs.forEach(npc => { npc.homePosition.x -= moveX })
+        }
+    }
+
+    // Check and apply vertical movement
+    if (moveY !== 0) {
+        let canMoveY = true
         for (let i = 0; i < boundaries.length; i++) {
             let boundary = boundaries[i]
             if(rectangularCollision({
                 rectangle1: player,
                 rectangle2: {...boundary, position: {
                     x: boundary.position.x,
-                    y: boundary.position.y + CONFIG.MOVE_SPEED,
+                    y: boundary.position.y - moveY,
                 }},
             })) {
-                moving = false
+                canMoveY = false
                 break;
             }
         }
-
-        if (moving) {
+        if (canMoveY) {
             movables.forEach(movable => {
-                movable.position.y += CONFIG.MOVE_SPEED
+                movable.position.y -= moveY
             })
-        }
-    }
-    else if (keys.a.pressed && lastKey === "a") {
-        player.image = player.sprites.left
-        player.moving = true
-        for (let i = 0; i < boundaries.length; i++) {
-            let boundary = boundaries[i]
-            if(rectangularCollision({
-                rectangle1: player,
-                rectangle2: {...boundary, position: {
-                    x: boundary.position.x + CONFIG.MOVE_SPEED,
-                    y: boundary.position.y,
-                }},
-            })) {
-                moving = false
-                break;
-            }
-        }
-
-        if (moving) {
-            movables.forEach(movable => {
-                movable.position.x += CONFIG.MOVE_SPEED
-            })
-        }
-    }
-    else if (keys.s.pressed && lastKey === "s") {
-        player.image = player.sprites.down
-        player.moving = true
-        for (let i = 0; i < boundaries.length; i++) {
-            let boundary = boundaries[i]
-            if(rectangularCollision({
-                rectangle1: player,
-                rectangle2: {...boundary, position: {
-                    x: boundary.position.x,
-                    y: boundary.position.y - CONFIG.MOVE_SPEED,
-                }},
-            })) {
-                moving = false
-                break;
-            }
-        }
-        if (moving) {
-            movables.forEach(movable => {
-                movable.position.y -= CONFIG.MOVE_SPEED
-            })
-        }
-    }
-    else if (keys.d.pressed && lastKey === "d") {
-        player.image = player.sprites.right
-        player.moving = true
-        for (let i = 0; i < boundaries.length; i++) {
-            let boundary = boundaries[i]
-            if(rectangularCollision({
-                rectangle1: player,
-                rectangle2: {...boundary, position: {
-                    x: boundary.position.x - CONFIG.MOVE_SPEED,
-                    y: boundary.position.y,
-                }},
-            })) {
-                moving = false
-                break;
-            }
-        }
-        if (moving) {
-            movables.forEach(movable => {
-                movable.position.x -= CONFIG.MOVE_SPEED
-            })
+            // Keep NPC home positions in sync with world scroll
+            npcs.forEach(npc => { npc.homePosition.y -= moveY })
         }
     }
 }
@@ -277,6 +341,31 @@ animate()
 
 let lastKey = ""
 window.addEventListener("keydown", (e) => {
+    // Handle NPC interaction with Enter
+    if (e.key === "Enter") {
+        if (dialogueBox.active) {
+            if (!dialogueBox.isFullyDisplayed()) {
+                dialogueBox.skipToEnd()
+            } else {
+                dialogueBox.close()
+                // Return any approaching NPCs to their home position
+                npcs.forEach(npc => {
+                    if (npc._pendingReturn) {
+                        npc.returnHome()
+                        npc._pendingReturn = false
+                    }
+                })
+            }
+            return
+        }
+        // Check if near an NPC
+        const nearbyNpc = npcs.find(npc => npc.isPlayerInRange(player.position))
+        if (nearbyNpc) {
+            interactionManager.interact(nearbyNpc)
+        }
+        return
+    }
+
     switch (e.key) {
         case "w":
             keys.w.pressed = true
